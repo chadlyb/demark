@@ -1,0 +1,2 @@
+go test fuzz v1
+string(">\f>>\xd6\xd6 \x9f>>")
