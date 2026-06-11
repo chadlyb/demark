@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"os"
 	"regexp"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -129,6 +130,52 @@ func TestOutputPath(t *testing.T) {
 		if got := outputPath(tc.input, tc.flag); got != tc.want {
 			t.Errorf("outputPath(%q, %q) = %q, want %q", tc.input, tc.flag, got, tc.want)
 		}
+	}
+}
+
+func TestShellMenuCommands(t *testing.T) {
+	exe := `C:\Tools\demark.exe`
+	add := shellMenuCommands(exe, false)
+	if len(add) != 12 { // 2 extensions x 2 verbs x 3 reg-add calls
+		t.Fatalf("got %d add commands, want 12", len(add))
+	}
+	joined := ""
+	for _, c := range add {
+		if c[0] != "reg" || c[1] != "add" {
+			t.Errorf("expected reg add command, got %v", c)
+		}
+		joined += strings.Join(c, " ") + "\n"
+	}
+	for _, want := range []string{
+		`HKCU\Software\Classes\SystemFileAssociations\.md\shell\demark.convert`,
+		`HKCU\Software\Classes\SystemFileAssociations\.markdown\shell\demark.view`,
+		`Convert to HTML`,
+		`View as HTML`,
+		`"C:\Tools\demark.exe" "%1" --open`,
+		`"C:\Tools\demark.exe" "%1"`,
+	} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("add commands missing %q in:\n%s", want, joined)
+		}
+	}
+
+	del := shellMenuCommands(exe, true)
+	if len(del) != 4 { // 2 extensions x 2 verbs
+		t.Fatalf("got %d delete commands, want 4", len(del))
+	}
+	for _, c := range del {
+		if c[1] != "delete" || c[len(c)-1] != "/f" {
+			t.Errorf("expected forced reg delete, got %v", c)
+		}
+	}
+}
+
+func TestSetupShellMenuNonWindows(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("non-Windows behavior")
+	}
+	if err := setupShellMenu(false); err == nil {
+		t.Error("setupShellMenu should fail on non-Windows platforms")
 	}
 }
 

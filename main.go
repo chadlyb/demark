@@ -19,8 +19,10 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
 )
@@ -34,6 +36,10 @@ func usage(w io.Writer) {
 Converts a Markdown file to a standalone HTML document with built-in styling.
 
   -o <file>    write output to <file> ("-" for stdout)
+  --open       open the generated HTML with the system's default handler
+  --install    (Windows) add Explorer right-click entries for .md files:
+               "Convert to HTML" and "View as HTML"
+  --uninstall  (Windows) remove the Explorer right-click entries
   -h, --help   show this help
 
 Without -o, foobar.md becomes foobar.html. Use "-" as the input file to
@@ -48,6 +54,7 @@ func fail(msg string) {
 
 func main() {
 	input, output := "", ""
+	openAfter, install, uninstall := false, false, false
 	args := os.Args[1:]
 	for j := 0; j < len(args); j++ {
 		a := args[j]
@@ -62,6 +69,12 @@ func main() {
 			output = a[len("-o="):]
 		case strings.HasPrefix(a, "--output="):
 			output = a[len("--output="):]
+		case a == "--open":
+			openAfter = true
+		case a == "--install":
+			install = true
+		case a == "--uninstall":
+			uninstall = true
 		case a == "-h" || a == "--help":
 			usage(os.Stdout)
 			return
@@ -74,6 +87,19 @@ func main() {
 			fail("unknown flag: " + a)
 		}
 	}
+
+	if install || uninstall {
+		if err := setupShellMenu(uninstall); err != nil {
+			fail(err.Error())
+		}
+		if uninstall {
+			fmt.Println("demark: removed Explorer context-menu entries for .md files")
+		} else {
+			fmt.Println("demark: installed Explorer context-menu entries for .md files")
+		}
+		return
+	}
+
 	if input == "" {
 		usage(os.Stderr)
 		os.Exit(2)
@@ -104,12 +130,81 @@ func main() {
 	doc := convert(string(src), fallbackTitle)
 
 	if output == "-" {
+		if openAfter {
+			fail("--open cannot be combined with stdout output")
+		}
 		fmt.Print(doc)
 		return
 	}
 	if err := os.WriteFile(output, []byte(doc), 0o644); err != nil {
 		fail(err.Error())
 	}
+	if openAfter {
+		if err := openWithHandler(output); err != nil {
+			fail("opening " + output + ": " + err.Error())
+		}
+	}
+}
+
+// openWithHandler opens path with the operating system's default handler
+// for its file type (e.g. the default browser for .html).
+func openWithHandler(path string) error {
+	switch runtime.GOOS {
+	case "darwin":
+		return exec.Command("open", path).Start()
+	case "windows":
+		return exec.Command("rundll32", "url.dll,FileProtocolHandler", path).Start()
+	default:
+		return exec.Command("xdg-open", path).Start()
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Windows Explorer integration
+
+// shellMenuCommands returns the reg.exe invocations that add (or remove)
+// per-user Explorer context-menu verbs for .md files. Registering under
+// HKCU\Software\Classes\SystemFileAssociations applies to the extension
+// regardless of which application owns the .md association, and needs no
+// administrator rights.
+func shellMenuCommands(exe string, remove bool) [][]string {
+	verbs := []struct{ key, label, args string }{
+		{"demark.convert", "Convert to HTML", `"%1"`},
+		{"demark.view", "View as HTML", `"%1" --open`},
+	}
+	var cmds [][]string
+	for _, ext := range []string{".md", ".markdown"} {
+		base := `HKCU\Software\Classes\SystemFileAssociations\` + ext + `\shell\`
+		for _, v := range verbs {
+			key := base + v.key
+			if remove {
+				cmds = append(cmds, []string{"reg", "delete", key, "/f"})
+				continue
+			}
+			cmds = append(cmds,
+				[]string{"reg", "add", key, "/ve", "/d", v.label, "/f"},
+				[]string{"reg", "add", key, "/v", "Icon", "/d", exe, "/f"},
+				[]string{"reg", "add", key + `\command`, "/ve",
+					"/d", `"` + exe + `" ` + v.args, "/f"})
+		}
+	}
+	return cmds
+}
+
+func setupShellMenu(remove bool) error {
+	if runtime.GOOS != "windows" {
+		return fmt.Errorf("--install and --uninstall are only supported on Windows")
+	}
+	exe, err := os.Executable()
+	if err != nil {
+		return err
+	}
+	for _, c := range shellMenuCommands(exe, remove) {
+		if out, err := exec.Command(c[0], c[1:]...).CombinedOutput(); err != nil {
+			return fmt.Errorf("%s: %v: %s", strings.Join(c, " "), err, strings.TrimSpace(string(out)))
+		}
+	}
+	return nil
 }
 
 // ---------------------------------------------------------------------------

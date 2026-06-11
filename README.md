@@ -24,10 +24,26 @@ demark foobar.md              # writes foobar.html
 demark foobar.md -o out.html  # explicit output file
 demark foobar.md -o -         # write to stdout
 demark -                      # read stdin, write stdout
+demark foobar.md --open       # convert, then open in the default browser
 ```
 
 The document `<title>` is taken from the first `# heading`, falling back to
 the input filename. demark refuses to overwrite its own input file.
+
+## Windows Explorer integration
+
+```
+demark --install
+```
+
+adds right-click context-menu entries for `.md` and `.markdown` files:
+**Convert to HTML** (writes the .html next to the file) and **View as
+HTML** (converts and opens it in your browser). Registration is per-user
+(`HKCU`, no administrator rights needed) and keyed to the file extension,
+so it works regardless of which app owns the `.md` association. On
+Windows 11 the entries appear under "Show more options" in the classic
+menu. `demark --uninstall` removes them. The entries point at the demark
+binary's location at install time, so re-run `--install` after moving it.
 
 ## Supported Markdown
 
